@@ -12,6 +12,9 @@ public class Car extends Quad {
 	Vector2f initialdirection, direction, tmpvelocity;
 	boolean forward;
 
+	final float speed = 150;
+	final float speedscale = speed * speed;
+
 	public Car(float x, float y) {
 		super(x, y, 33, 12);
 		body = new RigidBody2(PhysicsShapeCreator.create(this));
@@ -19,7 +22,7 @@ public class Car extends Quad {
 		body.setInertia(new Matrix1f());
 		body.setLinearDamping(0.25f);
 		body.setAngularDamping(2f);
-		initialdirection = new Vector2f(100, 0);
+		initialdirection = new Vector2f(speed, 0);
 		direction = new Vector2f();
 		tmpvelocity = new Vector2f();
 	}
@@ -34,18 +37,17 @@ public class Car extends Quad {
 		m.transpose();
 		direction.transform(m);
 		float veldot = VecMath.dotproduct(body.getLinearVelocity(), direction);
+		forward = veldot > 0;
 		tmpvelocity.set(direction);
-		tmpvelocity.scale(veldot / 10000);
+		tmpvelocity.scale(veldot / speedscale);
 		body.setLinearVelocity(tmpvelocity);
 	}
 
 	public void accelerate() {
-		forward = true;
 		body.applyCentralForce(direction);
 	}
 
 	public void brake() {
-		forward = false;
 		direction.negate();
 		body.applyCentralForce(direction);
 		direction.negate();
@@ -53,11 +55,11 @@ public class Car extends Quad {
 
 	public void steerLeft() {
 		float factor = forward ? -1 : 1;
-		body.applyTorque(factor * (float) body.getLinearVelocity().lengthSquared() / 500f);
+		body.applyTorque(factor * (float) Math.sqrt(body.getLinearVelocity().length()) * 15);
 	}
 
 	public void steerRight() {
 		float factor = forward ? 1 : -1;
-		body.applyTorque(factor * (float) body.getLinearVelocity().lengthSquared() / 500f);
+		body.applyTorque(factor * (float) Math.sqrt(body.getLinearVelocity().length()) * 15);
 	}
 }

@@ -1,6 +1,5 @@
 package objects;
 
-import gui.Color;
 import math.VecMath;
 import matrix.Matrix1f;
 import quaternion.Complexf;
@@ -31,11 +30,10 @@ public class Wall extends ShapedObject2 {
 		localC = VecMath.subtraction(c, center);
 		localD = VecMath.subtraction(d, center);
 
-		Color col = Color.WHITE;
-		this.addVertex(localA, col);
-		this.addVertex(localB, col);
-		this.addVertex(localC, col);
-		this.addVertex(localD, col);
+		addVertex(localA);
+		addVertex(localB);
+		addVertex(localC);
+		addVertex(localD);
 		setRenderMode(GLConstants.TRIANGLE_ADJACENCY);
 		addQuad(0, 0, 1, 1, 2, 2, 3, 3);
 		this.prerender();
@@ -44,7 +42,7 @@ public class Wall extends ShapedObject2 {
 		float minY = Math.min(localA.y, Math.min(localB.y, Math.min(localC.y, localD.y)));
 		float maxX = Math.max(localA.x, Math.max(localB.x, Math.max(localC.x, localD.x)));
 		float maxY = Math.max(localA.y, Math.max(localB.y, Math.max(localC.y, localD.y)));
-		body = new RigidBody2(new WallShape(minX, minY, maxX, maxY));
+		body = new RigidBody2(new WallShape(center.x, center.y, minX, minY, maxX, maxY));
 	}
 
 	public RigidBody2 getBody() {
@@ -52,8 +50,11 @@ public class Wall extends ShapedObject2 {
 	}
 
 	private class WallShape extends CollisionShape2 {
-		WallShape(float minX, float minY, float maxX, float maxY) {
+		WallShape(float x, float y, float minX, float minY, float maxX, float maxY) {
+			super();
+			translate(x, y);
 			setAABB(new Vector2f(minX, minY), new Vector2f(maxX, maxY));
+			supportcalculator = createSupportCalculator(this);
 		}
 
 		@Override
@@ -65,64 +66,68 @@ public class Wall extends ShapedObject2 {
 	private class WallSupport implements SupportCalculator<Vector2f> {
 		@Override
 		public Vector2f supportPointLocal(Vector2f direction) {
+			Vector2f v;
 			float dA = VecMath.dotproduct(direction, localA);
 			float dB = VecMath.dotproduct(direction, localB);
-			if (dA > dB) {
+			if (dA >= dB) {
 				float dD = VecMath.dotproduct(direction, localD);
-				if (dA > dD) {
-					return localA;
+				if (dA >= dD) {
+					v = new Vector2f(localA);
 				} else {
 					float dC = VecMath.dotproduct(direction, localC);
-					if (dD > dC) {
-						return localD;
+					if (dD >= dC) {
+						v = new Vector2f(localD);
 					} else {
-						return localC;
+						v = new Vector2f(localC);
 					}
 				}
 			} else {
 				float dC = VecMath.dotproduct(direction, localC);
-				if (dB > dC) {
-					return localB;
+				if (dB >= dC) {
+					v = new Vector2f(localB);
 				} else {
 					float dD = VecMath.dotproduct(direction, localD);
-					if (dC > dD) {
-						return localC;
+					if (dC >= dD) {
+						v = new Vector2f(localC);
 					} else {
-						return localD;
+						v = new Vector2f(localD);
 					}
 				}
 			}
+			return v;
 		}
 
 		@Override
 		public Vector2f supportPointLocalNegative(Vector2f direction) {
+			Vector2f v;
 			float dA = VecMath.dotproduct(direction, localA);
 			float dB = VecMath.dotproduct(direction, localB);
 			if (dA < dB) {
 				float dD = VecMath.dotproduct(direction, localD);
 				if (dA < dD) {
-					return localA;
+					v = new Vector2f(localA);
 				} else {
 					float dC = VecMath.dotproduct(direction, localC);
 					if (dD < dC) {
-						return localD;
+						v = new Vector2f(localD);
 					} else {
-						return localC;
+						v = new Vector2f(localC);
 					}
 				}
 			} else {
 				float dC = VecMath.dotproduct(direction, localC);
 				if (dB < dC) {
-					return localB;
+					v = new Vector2f(localB);
 				} else {
 					float dD = VecMath.dotproduct(direction, localD);
 					if (dC < dD) {
-						return localC;
+						v = new Vector2f(localC);
 					} else {
-						return localD;
+						v = new Vector2f(localD);
 					}
 				}
 			}
+			return v;
 		}
 
 		@Override

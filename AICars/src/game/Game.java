@@ -13,6 +13,7 @@ import integration.VerletIntegration;
 import loader.FontLoader;
 import loader.ShaderLoader;
 import manifold.MultiPointManifoldManager2;
+import math.VecMath;
 import narrowphase.EPA2;
 import narrowphase.GJK2;
 import narrowphase.SupportRaycast2;
@@ -23,6 +24,7 @@ import physics.PhysicsSpace2;
 import positionalcorrection.ProjectionCorrection;
 import resolution.ImpulseResolution;
 import shader.Shader;
+import shape2d.Circle;
 import sound.NullSoundEnvironment;
 import space.PhysicsProfiler;
 import space.SimplePhysicsProfiler;
@@ -46,16 +48,15 @@ public class Game extends StandardGame {
 	@Override
 	public void init() {
 		initDisplay(new GLDisplay(), new DisplayMode(1280, 720, "AICars", false), new PixelFormat(),
-				new VideoSettings(1280, 720), new NullSoundEnvironment());
+				new VideoSettings(1920, 1080), new NullSoundEnvironment());
 
-		Shader defaultshader3 = new Shader(
-				ShaderLoader.loadShaderFromFile("res/shaders/defaultshader.vert", "res/shaders/defaultshader.frag"));
+		int defaultShaderID = ShaderLoader.loadShaderFromFile("res/shaders/defaultshader.vert",
+				"res/shaders/defaultshader.frag");
+		Shader defaultshader3 = new Shader(defaultShaderID);
 		addShader(defaultshader3);
-		defaultshader = new Shader(
-				ShaderLoader.loadShaderFromFile("res/shaders/defaultshader.vert", "res/shaders/defaultshader.frag"));
+		defaultshader = new Shader(defaultShaderID);
 		addShader2d(defaultshader);
-		Shader defaultshaderInterface = new Shader(
-				ShaderLoader.loadShaderFromFile("res/shaders/defaultshader.vert", "res/shaders/defaultshader.frag"));
+		Shader defaultshaderInterface = new Shader(defaultShaderID);
 		addShaderInterface(defaultshaderInterface);
 
 		space = new PhysicsSpace2(new VerletIntegration(), new DynamicAABBTree2(), new GJK2(new EPA2()),
@@ -85,40 +86,80 @@ public class Game extends StandardGame {
 		inputs.addEvent(left);
 		inputs.addEvent(right);
 
-		car = new Car(100, 120);
+		initTrackData();
+		car = new Car(600, 200);
 		space.addRigidBody(car, car.getBody());
 		defaultshader.addObject(car);
+	}
 
-		Wall w = new Wall(new Vector2f(300, 200), new Vector2f(300, 400), new Vector2f(320, 400),
-				new Vector2f(320, 200));
+	private void addWall(Vector2f a, Vector2f b, Vector2f c, Vector2f d) {
+		Wall w = new Wall(a, b, c, d);
 		space.addRigidBody(w, w.getBody());
 		defaultshader.addObject(w);
-
-		initTrackData();
 	}
 
 	private void initTrackData() {
-		initTrack(new Vector2f[] { new Vector2f(500, 100), new Vector2f(800, 400), new Vector2f(400, 600),
-				new Vector2f(200, 500) }, new float[] { 200, 200, 200, 100 }, new float[] { 20, 10, 10, 10 });
+		initTrack(new Vector2f[] { new Vector2f(600, 220), new Vector2f(1000, 220), new Vector2f(1600, 300),
+				new Vector2f(1700, 600), new Vector2f(1600, 900), new Vector2f(1300, 900), new Vector2f(1300, 700),
+				new Vector2f(1300, 600), new Vector2f(1200, 500), new Vector2f(1100, 500), new Vector2f(500, 900),
+				new Vector2f(200, 700), new Vector2f(400, 400) },
+				new float[] { 120, 120, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100 });
 	}
 
-	private void initTrack(Vector2f[] trackpoints, float[] trackwidths, float[] runoffwidths) {
-		for (int i = 0; i < trackpoints.length; i++) {
-			Vector2f pa = trackpoints[i];
-			float wa = trackwidths[i];
-			float ra = runoffwidths[i];
-			Vector2f pb;
-			float wb, rb;
-			if (i < trackpoints.length - 1) {
-				pb = trackpoints[i + 1];
-				wb = trackwidths[i + 1];
-				rb = runoffwidths[i + 1];
-			} else {
-				pb = trackpoints[0];
-				wb = trackwidths[0];
-				rb = runoffwidths[0];
-			}
+	private void initTrack(Vector2f[] trackpoints, float[] trackwidths) {
+		for (Vector2f v : trackpoints)
+			defaultshader.addObject(new Circle(v.x, v.y, 10, 36));
 
+		Vector2f plast = trackpoints[trackpoints.length - 1];
+		Vector2f pb = trackpoints[0];
+		Vector2f pnext = trackpoints[1];
+		for (int i = 0; i < trackpoints.length; i++) {
+			Vector2f pa = pb;
+			float wa = trackwidths[i];
+			pb = pnext;
+			float wb;
+			if (i < trackpoints.length - 1) {
+				wb = trackwidths[i + 1];
+			} else {
+				wb = trackwidths[0];
+			}
+			pnext = trackpoints[(i + 2) % trackpoints.length];
+
+			Vector2f trackvec = VecMath.subtraction(pb, pa);
+			Vector2f tracknormal = new Vector2f(trackvec.y, -trackvec.x);
+			tracknormal.normalize();
+			Vector2f normalA = VecMath.subtraction(pb, plast);
+			normalA.set(normalA.y, -normalA.x);
+			normalA.normalize();
+			Vector2f normalB = VecMath.subtraction(pnext, pa);
+			normalB.set(normalB.y, -normalB.x);
+			normalB.normalize();
+
+			Vector2f a1 = VecMath.scale(normalA, wa);
+			Vector2f b1 = VecMath.scale(normalA, wa + 10f);
+			Vector2f c1 = VecMath.scale(normalB, wb + 10f);
+			Vector2f d1 = VecMath.scale(normalB, wb);
+
+			a1.translate(pa);
+			b1.translate(pa);
+			c1.translate(pb);
+			d1.translate(pb);
+
+			addWall(a1, d1, c1, b1);
+
+			Vector2f a2 = VecMath.scale(normalA, -wa);
+			Vector2f b2 = VecMath.scale(normalA, -wa + 10f);
+			Vector2f c2 = VecMath.scale(normalB, -wb + 10f);
+			Vector2f d2 = VecMath.scale(normalB, -wb);
+
+			a2.translate(pa);
+			b2.translate(pa);
+			c2.translate(pb);
+			d2.translate(pb);
+
+			addWall(a2, d2, c2, b2);
+
+			plast = pa;
 		}
 	}
 
