@@ -13,15 +13,18 @@ import integration.VerletIntegration;
 import loader.FontLoader;
 import loader.ShaderLoader;
 import manifold.MultiPointManifoldManager2;
+import manifold.RaycastResult;
 import math.VecMath;
 import narrowphase.EPA2;
 import narrowphase.GJK2;
 import narrowphase.SupportRaycast2;
 import objects.Car;
+import objects.Ray2;
 import objects.Wall;
 import physics.PhysicsDebug2;
 import physics.PhysicsSpace2;
 import positionalcorrection.ProjectionCorrection;
+import quaternion.Complexf;
 import resolution.ImpulseResolution;
 import shader.Shader;
 import shape2d.Circle;
@@ -33,6 +36,7 @@ import utils.GameProfiler;
 import utils.Profiler;
 import utils.SimpleGameProfiler;
 import vector.Vector2f;
+import vector.Vector4f;
 
 public class Game extends StandardGame {
 	PhysicsSpace2 space;
@@ -44,6 +48,8 @@ public class Game extends StandardGame {
 
 	Car car;
 	InputEvent up, down, left, right;
+	int numRaycasts = 10;
+	Circle[] raycastTrackers;
 
 	@Override
 	public void init() {
@@ -58,6 +64,10 @@ public class Game extends StandardGame {
 		addShader2d(defaultshader);
 		Shader defaultshaderInterface = new Shader(defaultShaderID);
 		addShaderInterface(defaultshaderInterface);
+		Shader raycasttrackershader = new Shader(ShaderLoader.loadShaderFromFile("res/shaders/colorshader.vert",
+				"res/shaders/colorshader.frag"));
+		raycasttrackershader.addArgument("u_color", new Vector4f(1, 0, 0, 1));
+		addShader2d(raycasttrackershader);
 
 		space = new PhysicsSpace2(new VerletIntegration(), new DynamicAABBTree2(), new GJK2(new EPA2()),
 				new SupportRaycast2(), new ImpulseResolution(), new ProjectionCorrection(1),
@@ -87,9 +97,17 @@ public class Game extends StandardGame {
 		inputs.addEvent(right);
 
 		initTrackData();
-		car = new Car(600, 200);
+		car = new Car(600, 200, numRaycasts);
 		space.addRigidBody(car, car.getBody());
 		defaultshader.addObject(car);
+		
+		raycastTrackers = new Circle[numRaycasts];
+		for(int i = 0; i < numRaycasts; i++) {
+			Circle c = new Circle(0, 0, 5, 18);
+			raycasttrackershader.addObject(c);
+			raycastTrackers[i] = c;
+		}
+		rayrotation.rotate(360 / (float) numRaycasts);
 	}
 
 	private void addWall(Vector2f a, Vector2f b, Vector2f c, Vector2f d) {
@@ -179,10 +197,38 @@ public class Game extends StandardGame {
 		renderInterfaceLayer();
 		debugger.end();
 	}
+	
+	private Complexf rayrotation = new Complexf();
+	private Vector2f lastdirection = new Vector2f();
+	private Vector2f raystart = new Vector2f();
+	private void singleRaycast(Car c, int i) {
+		Ray2 ray = c.rays[i];
+		ray.getDirection().set(lastdirection);
+		raystart.set(c.raystartpoints[i]);
+		raystart.transform(c.getRotation());
+		raystart.translate(c.getTranslation());
+		ray.getPosition().set(raystart);
+		RaycastResult<Vector2f> rr = space.raycast(ray);
+		if(rr != null) {
+			raycastTrackers[i].translateTo(rr.getHitPosition());
+		}
+		else {
+			raycastTrackers[i].translateTo(-100, -100);
+		}
+	}
+	private void doRaycasts(Car c) {
+		lastdirection.set(c.direction);
+		singleRaycast(c, 0);
+		for(int i = 1; i < numRaycasts; i++) {
+			lastdirection.transform(rayrotation);
+			singleRaycast(c, i);
+		}
+	}
 
 	@Override
 	public void update(int delta) {
 		car.update();
+		doRaycasts(car);
 		if (left.isActive()) {
 			car.steerLeft();
 		}

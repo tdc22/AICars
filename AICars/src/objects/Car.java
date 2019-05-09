@@ -4,27 +4,46 @@ import math.VecMath;
 import matrix.Matrix1f;
 import matrix.Matrix2;
 import physics.PhysicsShapeCreator;
+import quaternion.Complexf;
 import shape2d.Quad;
 import vector.Vector2f;
 
 public class Car extends Quad {
 	RigidBody2 body;
-	Vector2f initialdirection, direction, tmpvelocity;
+	Vector2f initialdirection, tmpvelocity;
+	public Vector2f direction;
 	boolean forward;
 
+	public final static float halfwidth = 12;
+	public final static float halflength = 33;
 	final float speed = 150;
 	final float speedscale = speed * speed;
+	
+	public Ray2[] rays;
+	public Vector2f[] raystartpoints;
 
-	public Car(float x, float y) {
-		super(x, y, 33, 12);
+	public Car(float x, float y, int numrays) {
+		super(x, y, halflength, halfwidth);
 		body = new RigidBody2(PhysicsShapeCreator.create(this));
 		body.setMass(1f);
 		body.setInertia(new Matrix1f());
 		body.setLinearDamping(0.25f);
 		body.setAngularDamping(2f);
-		initialdirection = new Vector2f(speed, 0);
+		initialdirection = new Vector2f(1, 0);
 		direction = new Vector2f();
 		tmpvelocity = new Vector2f();
+		
+		rays = new Ray2[numrays];
+		raystartpoints = new Vector2f[numrays];
+		Complexf rayrotation = new Complexf();
+		rayrotation.rotate(360 / (float) numrays);
+		Vector2f dir = new Vector2f(1, 0);
+		for(int i = 0; i < numrays; i++) {
+			rays[i] = new Ray2(new Vector2f(), new Vector2f());
+			raystartpoints[i] = body.supportPointLocal(dir);
+			raystartpoints[i].scale(1.01);
+			dir.transform(rayrotation);
+		}
 	}
 
 	public RigidBody2 getBody() {
@@ -36,21 +55,22 @@ public class Car extends Quad {
 		Matrix2 m = body.getMatrix().getSubMatrix2();
 		m.transpose();
 		direction.transform(m);
-		float veldot = VecMath.dotproduct(body.getLinearVelocity(), direction);
-		forward = veldot > 0;
 		tmpvelocity.set(direction);
-		tmpvelocity.scale(veldot / speedscale);
-		body.setLinearVelocity(tmpvelocity);
+		tmpvelocity.scale(speed);
+		float veldot = VecMath.dotproduct(body.getLinearVelocity(), tmpvelocity);
+		forward = veldot > 0;
+		body.getLinearVelocity().set(tmpvelocity);
+		body.getLinearVelocity().scale(veldot / speedscale);
 	}
 
 	public void accelerate() {
-		body.applyCentralForce(direction);
+		body.applyCentralForce(tmpvelocity);
 	}
 
 	public void brake() {
-		direction.negate();
-		body.applyCentralForce(direction);
-		direction.negate();
+		tmpvelocity.negate();
+		body.applyCentralForce(tmpvelocity);
+		tmpvelocity.negate();
 	}
 
 	public void steerLeft() {
