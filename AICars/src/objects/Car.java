@@ -18,6 +18,8 @@ public class Car extends Quad {
 	public final static float halflength = 33;
 	final float speed = 150;
 	final float speedscale = speed * speed;
+	final float forwarddamping = 0.25f;
+	final float backwarddamping = 0.5f;
 	
 	public Ray2[] rays;
 	public Vector2f[] raystartpoints;
@@ -27,7 +29,7 @@ public class Car extends Quad {
 		body = new RigidBody2(PhysicsShapeCreator.create(this));
 		body.setMass(1f);
 		body.setInertia(new Matrix1f());
-		body.setLinearDamping(0.25f);
+		body.setLinearDamping(forwarddamping);
 		body.setAngularDamping(2f);
 		initialdirection = new Vector2f(1, 0);
 		direction = new Vector2f();
@@ -64,11 +66,13 @@ public class Car extends Quad {
 	}
 
 	public void accelerate() {
+		body.setLinearDamping(forwarddamping);
 		body.applyCentralForce(tmpvelocity);
 	}
 
 	public void brake() {
 		tmpvelocity.negate();
+		body.setLinearDamping(backwarddamping);
 		body.applyCentralForce(tmpvelocity);
 		tmpvelocity.negate();
 	}

@@ -1,5 +1,6 @@
 package game;
 
+import ai.NeuralNetwork;
 import broadphase.DynamicAABBTree2;
 import display.DisplayMode;
 import display.GLDisplay;
@@ -35,6 +36,7 @@ import utils.Debugger;
 import utils.GameProfiler;
 import utils.Profiler;
 import utils.SimpleGameProfiler;
+import vector.Vector1f;
 import vector.Vector2f;
 import vector.Vector4f;
 
@@ -47,13 +49,33 @@ public class Game extends StandardGame {
 	PhysicsDebug2 physicsdebug;
 
 	Car car;
-	InputEvent up, down, left, right;
+	int mode = 1;
+	InputEvent up, down, left, right, mode1, mode2, mode3;
 	int numRaycasts = 10;
 	Circle[] raycastTrackers;
+	float[] raycastDistances;
+	
+	NeuralNetwork nn;
+	int nnInputs = numRaycasts + 5;
+	float undefinedRayDistance = 0;
+	boolean lastLeft = false, lastRight = false, lastUp = false, lastDown = false;
+
+	int trainingtimer = 0;
+	int timeBetweenSplits = 100;
+	int splitlength = 300;
+	int timeline = 0;
+	float velocityAfterInterval;
+	Vector2f splitPosition = new Vector2f();
+	Complexf splitRotation = new Complexf();
+	Vector2f splitVelocity = new Vector2f();
+	Vector1f splitAngularVelocity = new Vector1f();
+	float[] inputsOnSplit;
+	float[] expectedOutputs;
+	boolean firstIterationOfAlternativeTimeline = true;
 
 	@Override
 	public void init() {
-		initDisplay(new GLDisplay(), new DisplayMode(1280, 720, "AICars", false), new PixelFormat(),
+		initDisplay(new GLDisplay(), new DisplayMode(1280, 720, "AICars", true), new PixelFormat(),
 				new VideoSettings(1920, 1080), new NullSoundEnvironment());
 
 		int defaultShaderID = ShaderLoader.loadShaderFromFile("res/shaders/defaultshader.vert",
@@ -90,11 +112,17 @@ public class Game extends StandardGame {
 				new Input(Input.KEYBOARD_EVENT, "A", KeyInput.KEY_DOWN));
 		right = new InputEvent("Right", new Input(Input.KEYBOARD_EVENT, "Right", KeyInput.KEY_DOWN),
 				new Input(Input.KEYBOARD_EVENT, "D", KeyInput.KEY_DOWN));
+		mode1 = new InputEvent("Mode1", new Input(Input.KEYBOARD_EVENT, "1", KeyInput.KEY_PRESSED));
+		mode2 = new InputEvent("Mode2", new Input(Input.KEYBOARD_EVENT, "2", KeyInput.KEY_PRESSED));
+		mode3 = new InputEvent("Mode3", new Input(Input.KEYBOARD_EVENT, "3", KeyInput.KEY_PRESSED));
 
 		inputs.addEvent(up);
 		inputs.addEvent(down);
 		inputs.addEvent(left);
 		inputs.addEvent(right);
+		inputs.addEvent(mode1);
+		inputs.addEvent(mode2);
+		inputs.addEvent(mode3);
 
 		initTrackData();
 		car = new Car(600, 200, numRaycasts);
@@ -102,12 +130,20 @@ public class Game extends StandardGame {
 		defaultshader.addObject(car);
 		
 		raycastTrackers = new Circle[numRaycasts];
+		raycastDistances = new float[numRaycasts];
 		for(int i = 0; i < numRaycasts; i++) {
 			Circle c = new Circle(0, 0, 5, 18);
 			raycasttrackershader.addObject(c);
 			raycastTrackers[i] = c;
+			raycastDistances[i] = undefinedRayDistance;
 		}
 		rayrotation.rotate(360 / (float) numRaycasts);
+		
+		int nnInputcount = 5 + numRaycasts;
+		int nnOutputcount = 4;
+		nn = new NeuralNetwork(new int[] {nnInputcount, 100, 100, 100, nnOutputcount});
+		inputsOnSplit = new float[nnInputcount];
+		expectedOutputs = new float[nnOutputcount];
 	}
 
 	private void addWall(Vector2f a, Vector2f b, Vector2f c, Vector2f d) {
@@ -211,9 +247,11 @@ public class Game extends StandardGame {
 		RaycastResult<Vector2f> rr = space.raycast(ray);
 		if(rr != null) {
 			raycastTrackers[i].translateTo(rr.getHitPosition());
+			raycastDistances[i] = rr.getHitDistance();
 		}
 		else {
 			raycastTrackers[i].translateTo(-100, -100);
+			raycastDistances[i] = undefinedRayDistance;
 		}
 	}
 	private void doRaycasts(Car c) {
@@ -229,22 +267,146 @@ public class Game extends StandardGame {
 	public void update(int delta) {
 		car.update();
 		doRaycasts(car);
-		if (left.isActive()) {
-			car.steerLeft();
+		if (mode1.isActive()) {
+			mode = 1;
 		}
-		if (right.isActive()) {
-			car.steerRight();
+		else if (mode2.isActive()) {
+			mode = 2;
 		}
-		if (up.isActive()) {
-			car.accelerate();
+		else if (mode3.isActive()) {
+			mode = 3;
 		}
-		if (down.isActive()) {
-			car.brake();
+		if(mode == 1) {
+			passCarInputs(up.isActive(), down.isActive(), left.isActive(), right.isActive());
+		}
+		else {
+			float[] nnIns = new float[nnInputs];
+			for(int i = 0; i < nnInputs; i++) {
+				if(i < numRaycasts) {
+					nnIns[i] = raycastDistances[i];
+				}
+				else if(i == numRaycasts) {
+					nnIns[i] = (float) car.getBody().getLinearVelocity().length();
+				}
+				else if(i == numRaycasts + 1) {
+					nnIns[i] = lastUp ? 1 : 0;
+				}
+				else if(i == numRaycasts + 2) {
+					nnIns[i] = lastDown ? 1 : 0;
+				}
+				else if(i == numRaycasts + 3) {
+					nnIns[i] = lastLeft ? 1 : 0;
+				}
+				else if(i == numRaycasts + 4) {
+					nnIns[i] = lastRight ? 1 : 0;
+				}
+			}
+			float[] nnOuts = nn.feedForward(nnIns);
+			/*System.out.println("------------------");
+			for(int i = 0; i < nnOuts.length; i++) {
+				System.out.println(nnOuts[i]);
+			}*/
+			
+			lastUp = nnOuts[0] > 0.5;
+			lastDown = nnOuts[1] > 0.5;
+			lastLeft = nnOuts[2] > 0.5;
+			lastRight = nnOuts[3] > 0.5;
+			
+			if(mode == 2) {
+				passCarInputs(lastUp, lastDown, lastLeft, lastRight);
+			}
+			else if(mode == 3) {
+				// 1. Split in two timelines: one with NN action, one with random action
+				// 2. Compare Timelines after time interval
+				trainingtimer += delta;
+				if(timeline == 0) {
+					passCarInputs(lastUp, lastDown, lastLeft, lastRight);
+					if(trainingtimer >= timeBetweenSplits) {
+						splitPosition.set(car.getTranslation());
+						splitRotation.set(car.getRotation());
+						splitVelocity.set(car.getBody().getLinearVelocity());
+						splitAngularVelocity.set(car.getBody().getAngularVelocity());
+						System.arraycopy(nnIns, 0, inputsOnSplit, 0, nnIns.length);
+						timeline++;
+						trainingtimer = 0;
+					}
+				}
+				else if(timeline == 1) {
+					passCarInputs(lastUp, lastDown, lastLeft, lastRight);
+					if(trainingtimer >= splitlength) {
+						velocityAfterInterval = (float) car.getBody().getLinearVelocity().length();
+						car.getTranslation().set(splitPosition);
+						car.getRotation().set(splitRotation);
+						car.getBody().getLinearVelocity().set(splitVelocity);
+						car.getBody().getAngularVelocity().set(splitAngularVelocity);
+						timeline++;
+						trainingtimer = 0;
+					}
+				}
+				else if(timeline == 2) {
+					if(firstIterationOfAlternativeTimeline) {
+						int modifiyInput = (int) (Math.random() * 4);
+						System.out.println("Modifying: " + modifiyInput);
+						switch(modifiyInput) {
+						case 0:
+							lastUp = !lastUp;
+							nnOuts[0] = lastUp ? 1 : 0;
+							break;
+						case 1:
+							lastDown = !lastDown;
+							nnOuts[1] = lastDown ? 1 : 0;
+							break;
+						case 2:
+							lastLeft = !lastLeft;
+							nnOuts[2] = lastLeft ? 1 : 0;
+							break;
+						case 3:
+							lastRight = !lastRight;
+							nnOuts[3] = lastRight ? 1 : 0;
+							break;
+						}
+						System.arraycopy(nnOuts, 0, expectedOutputs, 0, nnOuts.length);
+						firstIterationOfAlternativeTimeline = false;
+					}
+					passCarInputs(lastUp, lastDown, lastLeft, lastRight);
+					if(trainingtimer >= splitlength) {
+						System.out.println(velocityAfterInterval + " vs " + car.getBody().getLinearVelocity().length());
+						if(velocityAfterInterval > car.getBody().getLinearVelocity().length()) {
+							car.getTranslation().set(splitPosition);
+							car.getRotation().set(splitRotation);
+							car.getBody().getLinearVelocity().set(splitVelocity);
+							car.getBody().getAngularVelocity().set(splitAngularVelocity);
+						}
+						else {
+							nn.feedForward(inputsOnSplit);
+							nn.backProp(expectedOutputs);
+						}
+						timeline = 0;
+						trainingtimer = 0;
+						firstIterationOfAlternativeTimeline = true;
+					}
+				}
+			}
 		}
 
 		debugger.update(fps, 0, 0);
 		space.update(delta);
 		physicsdebug.update();
 		profiler.update(delta);
+	}
+	
+	private void passCarInputs(boolean up, boolean down, boolean left, boolean right) {
+		if (up) {
+			car.accelerate();
+		}
+		if (down) {
+			car.brake();
+		}
+		if (left) {
+			car.steerLeft();
+		}
+		if (right) {
+			car.steerRight();
+		}
 	}
 }
