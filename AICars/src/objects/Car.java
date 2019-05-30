@@ -20,7 +20,7 @@ public class Car extends Quad {
 	final float speedscale = speed * speed;
 	final float forwarddamping = 0.25f;
 	final float backwarddamping = 0.5f;
-	
+
 	public Ray2[] rays;
 	public Vector2f[] raystartpoints;
 
@@ -34,13 +34,13 @@ public class Car extends Quad {
 		initialdirection = new Vector2f(1, 0);
 		direction = new Vector2f();
 		tmpvelocity = new Vector2f();
-		
+
 		rays = new Ray2[numrays];
 		raystartpoints = new Vector2f[numrays];
 		Complexf rayrotation = new Complexf();
 		rayrotation.rotate(360 / (float) numrays);
 		Vector2f dir = new Vector2f(1, 0);
-		for(int i = 0; i < numrays; i++) {
+		for (int i = 0; i < numrays; i++) {
 			rays[i] = new Ray2(new Vector2f(), new Vector2f());
 			raystartpoints[i] = body.supportPointLocal(dir);
 			raystartpoints[i].scale(1.01);
