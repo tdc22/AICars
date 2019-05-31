@@ -14,12 +14,10 @@ import display.DisplayMode;
 import display.GLDisplay;
 import display.PixelFormat;
 import display.VideoSettings;
-import gui.Font;
 import input.Input;
 import input.InputEvent;
 import input.KeyInput;
 import integration.VerletIntegration;
-import loader.FontLoader;
 import loader.ShaderLoader;
 import manifold.MultiPointManifoldManager2;
 import manifold.RaycastResult;
@@ -30,7 +28,6 @@ import narrowphase.SupportRaycast2;
 import objects.Car;
 import objects.Ray2;
 import objects.Wall;
-import physics.PhysicsDebug2;
 import physics.PhysicsSpace2;
 import positionalcorrection.ProjectionCorrection;
 import quaternion.Complexf;
@@ -38,12 +35,6 @@ import resolution.ImpulseResolution;
 import shader.Shader;
 import shape2d.Circle;
 import sound.NullSoundEnvironment;
-import space.PhysicsProfiler;
-import space.SimplePhysicsProfiler;
-import utils.Debugger;
-import utils.GameProfiler;
-import utils.Profiler;
-import utils.SimpleGameProfiler;
 import vector.Vector1f;
 import vector.Vector2f;
 import vector.Vector4f;
@@ -51,17 +42,15 @@ import vector.Vector4f;
 public class Game extends StandardGame {
 	PhysicsSpace2 space;
 	int tempdelta = 0;
-	Debugger debugger;
 	Shader defaultshader;
-	Profiler profiler;
-	PhysicsDebug2 physicsdebug;
 
 	Car car;
 	int mode = 3;
-	InputEvent up, down, left, right, mode1, mode2, mode3;
+	InputEvent up, down, left, right, mode1, mode2, mode3, toggleRendering;
 	int numRaycasts = 10;
 	Circle[] raycastTrackers;
 	float[] raycastDistances;
+	boolean isRendering = true;
 
 	NeuralNetwork nn;
 	Random random;
@@ -71,12 +60,13 @@ public class Game extends StandardGame {
 	float lastVelocity = 0;
 
 	int trainingtimer = 0;
-	int timeBetweenSplits = 0;
-	int maxSplitLength = 6000;
+	final int timeBetweenSplits = 0;
+	final int maxSplitLength = 6000;
+	final int maxIterationsInTimeline = maxSplitLength / 16;
 	int splitlength;
 	int timeline = 0;
 	int trainingsIterationsSinceSave = 0;
-	int savingInterval = 1000;
+	final int savingInterval = 1000;
 	long savingIntervalCount = 0;
 	LinkedList<boolean[]> firstTimelineOutputs;
 	float velocityAfterInterval;
@@ -88,6 +78,9 @@ public class Game extends StandardGame {
 	float[] inputsOnSplit;
 	float[] expectedOutputs;
 	boolean firstIterationOfTimeline = true;
+	LinkedList<boolean[]> outputstorage;
+
+	long starttime;
 
 	@Override
 	public void init() {
@@ -111,15 +104,6 @@ public class Game extends StandardGame {
 				new SupportRaycast2(), new ImpulseResolution(), new ProjectionCorrection(1),
 				new MultiPointManifoldManager2());
 
-		Font font = FontLoader.loadFont("res/fonts/DejaVuSans.ttf");
-		debugger = new Debugger(inputs, defaultshader3, defaultshaderInterface, font, cam);
-		physicsdebug = new PhysicsDebug2(inputs, defaultshader, font, space);
-		GameProfiler gp = new SimpleGameProfiler();
-		setProfiler(gp);
-		PhysicsProfiler pp = new SimplePhysicsProfiler();
-		space.setProfiler(pp);
-		profiler = new Profiler(this, inputs, font, gp, pp);
-
 		up = new InputEvent("Up", new Input(Input.KEYBOARD_EVENT, "Up", KeyInput.KEY_DOWN),
 				new Input(Input.KEYBOARD_EVENT, "W", KeyInput.KEY_DOWN));
 		down = new InputEvent("Down", new Input(Input.KEYBOARD_EVENT, "Down", KeyInput.KEY_DOWN),
@@ -131,6 +115,8 @@ public class Game extends StandardGame {
 		mode1 = new InputEvent("Mode1", new Input(Input.KEYBOARD_EVENT, "1", KeyInput.KEY_PRESSED));
 		mode2 = new InputEvent("Mode2", new Input(Input.KEYBOARD_EVENT, "2", KeyInput.KEY_PRESSED));
 		mode3 = new InputEvent("Mode3", new Input(Input.KEYBOARD_EVENT, "3", KeyInput.KEY_PRESSED));
+		toggleRendering = new InputEvent("ToggleRendering",
+				new Input(Input.KEYBOARD_EVENT, "Tab", KeyInput.KEY_PRESSED));
 
 		inputs.addEvent(up);
 		inputs.addEvent(down);
@@ -139,9 +125,10 @@ public class Game extends StandardGame {
 		inputs.addEvent(mode1);
 		inputs.addEvent(mode2);
 		inputs.addEvent(mode3);
+		inputs.addEvent(toggleRendering);
 
 		initTrackData();
-		car = new Car(600, 200, numRaycasts);
+		car = new Car(620, 200, numRaycasts);
 		space.addRigidBody(car, car.getBody());
 		defaultshader.addObject(car);
 
@@ -172,6 +159,14 @@ public class Game extends StandardGame {
 		expectedOutputs = new float[nnOutputcount];
 		firstTimelineOutputs = new LinkedList<boolean[]>();
 		random = new Random();
+		setRendered(false, true, false);
+
+		outputstorage = new LinkedList<boolean[]>();
+		for (int i = 0; i < maxIterationsInTimeline - 1; i++) {
+			outputstorage.add(new boolean[4]);
+		}
+
+		starttime = System.nanoTime();
 	}
 
 	private void addWall(Vector2f a, Vector2f b, Vector2f c, Vector2f d) {
@@ -207,9 +202,6 @@ public class Game extends StandardGame {
 			}
 			pnext = trackpoints[(i + 2) % trackpoints.length];
 
-			Vector2f trackvec = VecMath.subtraction(pb, pa);
-			Vector2f tracknormal = new Vector2f(trackvec.y, -trackvec.x);
-			tracknormal.normalize();
 			Vector2f normalA = VecMath.subtraction(pb, plast);
 			normalA.set(normalA.y, -normalA.x);
 			normalA.normalize();
@@ -252,14 +244,12 @@ public class Game extends StandardGame {
 
 	@Override
 	public void render2d() {
-		debugger.begin();
 		render2dLayer();
 	}
 
 	@Override
 	public void renderInterface() {
 		renderInterfaceLayer();
-		debugger.end();
 	}
 
 	private Complexf rayrotation = new Complexf();
@@ -292,6 +282,8 @@ public class Game extends StandardGame {
 		}
 	}
 
+	float[] nnIns = new float[nnInputs];
+
 	@Override
 	public void update(int delta) {
 		delta = 16; // Fixing timestep to avoid diverging timeline lengths
@@ -304,12 +296,32 @@ public class Game extends StandardGame {
 		} else if (mode3.isActive()) {
 			mode = 3;
 		}
+		if (toggleRendering.isActive()) {
+			isRendering = !isRendering;
+			if (isRendering) {
+				inputs.addEvent(up);
+				inputs.addEvent(down);
+				inputs.addEvent(left);
+				inputs.addEvent(right);
+				inputs.addEvent(mode1);
+				inputs.addEvent(mode2);
+				inputs.addEvent(mode3);
+			} else {
+				inputs.removeEvent(up);
+				inputs.removeEvent(down);
+				inputs.removeEvent(left);
+				inputs.removeEvent(right);
+				inputs.removeEvent(mode1);
+				inputs.removeEvent(mode2);
+				inputs.removeEvent(mode3);
+			}
+			setRendered(false, isRendering, false);
+		}
 		if (mode == 1) {
 			passCarInputs(up.isActive(), down.isActive(), left.isActive(), right.isActive());
 		} else {
-			float[] nnIns = null, nnOuts = null;
+			float[] nnOuts = null;
 			if (mode != 3 || timeline < 2 || firstIterationOfTimeline) {
-				nnIns = new float[nnInputs];
 				for (int i = 0; i < nnInputs; i++) {
 					if (i < numRaycasts) {
 						nnIns[i] = raycastDistances[i];
@@ -326,11 +338,6 @@ public class Game extends StandardGame {
 					}
 				}
 				nnOuts = nn.feedForward(nnIns);
-				/*
-				 * System.out.println("------------------"); for(int i = 0; i < nnOuts.length;
-				 * i++) { System.out.println(nnOuts[i]); }
-				 */
-
 				lastUp = nnOuts[0] > 0.5;
 				lastDown = nnOuts[1] > 0.5;
 				lastLeft = nnOuts[2] > 0.5;
@@ -353,7 +360,9 @@ public class Game extends StandardGame {
 						System.arraycopy(nnIns, 0, inputsOnSplit, 0, nnIns.length);
 						timeline++;
 						trainingtimer = 0;
-						firstTimelineOutputs.clear();
+						for (int i = 0; i < firstTimelineOutputs.size(); i++) {
+							outputstorage.add(firstTimelineOutputs.pop());
+						}
 						summedVelocityInTimeline1 = 0;
 						summedVelocityInTimeline2 = 0;
 						splitlength = (int) (random.nextFloat() * maxSplitLength);
@@ -361,7 +370,12 @@ public class Game extends StandardGame {
 				} else if (timeline == 1) {
 					passCarInputs(lastUp, lastDown, lastLeft, lastRight);
 					if (!firstIterationOfTimeline) {
-						firstTimelineOutputs.add(new boolean[] { lastUp, lastDown, lastLeft, lastRight });
+						boolean[] outputarray = outputstorage.pop();
+						outputarray[0] = lastUp;
+						outputarray[1] = lastDown;
+						outputarray[2] = lastLeft;
+						outputarray[3] = lastRight;
+						firstTimelineOutputs.add(outputarray);
 						summedVelocityInTimeline1 += car.getBody().getLinearVelocity().length();
 					} else {
 						firstIterationOfTimeline = false;
@@ -415,17 +429,10 @@ public class Game extends StandardGame {
 						lastDown = outputs[1];
 						lastLeft = outputs[2];
 						lastRight = outputs[3];
+						outputstorage.add(outputs);
 					}
 					passCarInputs(lastUp, lastDown, lastLeft, lastRight);
 					if (trainingtimer >= splitlength) {
-						// System.out.println("Endvelocities: " + velocityAfterInterval + " vs " +
-						// car.getBody().getLinearVelocity().length());
-						// System.out.println("Summed velocities: " + summedVelocityInTimeline1 + " vs "
-						// + summedVelocityInTimeline2);
-						/*
-						 * if(velocityAfterInterval < car.getBody().getLinearVelocity().length()) {
-						 * nn.feedForward(inputsOnSplit); nn.backProp(expectedOutputs); }
-						 */
 						if (summedVelocityInTimeline1 < summedVelocityInTimeline2) {
 							nn.feedForward(inputsOnSplit);
 							nn.backProp(expectedOutputs);
@@ -439,6 +446,10 @@ public class Game extends StandardGame {
 						firstIterationOfTimeline = true;
 
 						trainingsIterationsSinceSave++;
+						if (trainingsIterationsSinceSave > 100) {
+							System.out.println("Time: " + (System.nanoTime() - starttime));
+							System.exit(0);
+						}
 						if (trainingsIterationsSinceSave >= savingInterval) {
 							savingIntervalCount++;
 							try {
@@ -455,11 +466,7 @@ public class Game extends StandardGame {
 				}
 			}
 		}
-
-		debugger.update(fps, 0, 0);
 		space.update(delta);
-		physicsdebug.update();
-		profiler.update(delta);
 	}
 
 	private void passCarInputs(boolean up, boolean down, boolean left, boolean right) {
