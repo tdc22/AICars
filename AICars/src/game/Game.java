@@ -80,8 +80,6 @@ public class Game extends StandardGame {
 	boolean firstIterationOfTimeline = true;
 	LinkedList<boolean[]> outputstorage;
 
-	long starttime;
-
 	@Override
 	public void init() {
 		initDisplay(new GLDisplay(), new DisplayMode(1280, 720, "AICars", false), new PixelFormat(),
@@ -165,8 +163,6 @@ public class Game extends StandardGame {
 		for (int i = 0; i < maxIterationsInTimeline - 1; i++) {
 			outputstorage.add(new boolean[4]);
 		}
-
-		starttime = System.nanoTime();
 	}
 
 	private void addWall(Vector2f a, Vector2f b, Vector2f c, Vector2f d) {
@@ -446,10 +442,6 @@ public class Game extends StandardGame {
 						firstIterationOfTimeline = true;
 
 						trainingsIterationsSinceSave++;
-						if (trainingsIterationsSinceSave > 100) {
-							System.out.println("Time: " + (System.nanoTime() - starttime));
-							System.exit(0);
-						}
 						if (trainingsIterationsSinceSave >= savingInterval) {
 							savingIntervalCount++;
 							try {
