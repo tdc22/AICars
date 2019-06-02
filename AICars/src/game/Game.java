@@ -5,7 +5,7 @@ import java.io.BufferedWriter;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.util.LinkedList;
+import java.util.ArrayDeque;
 import java.util.Random;
 
 import ai.NeuralNetwork;
@@ -68,7 +68,7 @@ public class Game extends StandardGame {
 	int trainingsIterationsSinceSave = 0;
 	final int savingInterval = 1000;
 	long savingIntervalCount = 0;
-	LinkedList<boolean[]> firstTimelineOutputs;
+	ArrayDeque<boolean[]> firstTimelineOutputs;
 	float velocityAfterInterval;
 	float summedVelocityInTimeline1, summedVelocityInTimeline2;
 	Vector2f splitPosition = new Vector2f();
@@ -78,7 +78,7 @@ public class Game extends StandardGame {
 	float[] inputsOnSplit;
 	float[] expectedOutputs;
 	boolean firstIterationOfTimeline = true;
-	LinkedList<boolean[]> outputstorage;
+	ArrayDeque<boolean[]> outputstorage;
 
 	@Override
 	public void init() {
@@ -155,11 +155,11 @@ public class Game extends StandardGame {
 
 		inputsOnSplit = new float[nnInputcount];
 		expectedOutputs = new float[nnOutputcount];
-		firstTimelineOutputs = new LinkedList<boolean[]>();
+		firstTimelineOutputs = new ArrayDeque<boolean[]>();
 		random = new Random();
 		setRendered(false, true, false);
 
-		outputstorage = new LinkedList<boolean[]>();
+		outputstorage = new ArrayDeque<boolean[]>();
 		for (int i = 0; i < maxIterationsInTimeline - 1; i++) {
 			outputstorage.add(new boolean[4]);
 		}
