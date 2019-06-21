@@ -19,6 +19,7 @@ import input.InputEvent;
 import input.KeyInput;
 import integration.VerletIntegration;
 import loader.ShaderLoader;
+import loader.TextureLoader;
 import manifold.MultiPointManifoldManager2;
 import manifold.RaycastResult;
 import math.VecMath;
@@ -34,7 +35,9 @@ import quaternion.Complexf;
 import resolution.ImpulseResolution;
 import shader.Shader;
 import shape2d.Circle;
+import shape2d.Quad;
 import sound.NullSoundEnvironment;
+import texture.Texture;
 import vector.Vector1f;
 import vector.Vector2f;
 import vector.Vector4f;
@@ -47,23 +50,31 @@ public class Game extends StandardGame {
 	Car car;
 	int mode = 3;
 	InputEvent up, down, left, right, mode1, mode2, mode3, toggleRendering;
+	Quad arrowUp, arrowDown, arrowLeft, arrowRight;
 	int numRaycasts = 10;
 	Circle[] raycastTrackers;
 	float[] raycastDistances;
 	boolean isRendering = true;
 
+	final String nnFilename = "NN6";
+	final String nnFilepath = "res/networks/" + nnFilename;
 	NeuralNetwork nn;
 	Random random;
-	int nnInputs = numRaycasts + 5;
+	int nnInputs = numRaycasts + 6;
 	float undefinedRayDistance = 0;
 	boolean lastLeft = false, lastRight = false, lastUp = false, lastDown = false;
 	float lastVelocity = 0;
 
 	int trainingtimer = 0;
+	int controltimer = 0;
 	final int timeBetweenSplits = 0;
-	final int maxSplitLength = 6000;
+	final int minSplitLength = 3000;
+	final int maxSplitLength = 8000;
+	final int maxControllLength = 3000;
+	final int splitLengthInterval = maxSplitLength - minSplitLength;
 	final int maxIterationsInTimeline = maxSplitLength / 16;
 	int splitlength;
+	int controllength;
 	int timeline = 0;
 	int trainingsIterationsSinceSave = 0;
 	final int savingInterval = 1000;
@@ -74,15 +85,24 @@ public class Game extends StandardGame {
 	Vector2f splitPosition = new Vector2f();
 	Complexf splitRotation = new Complexf();
 	Vector2f splitVelocity = new Vector2f();
+	Vector2f splitForceAccumulator = new Vector2f();
 	Vector1f splitAngularVelocity = new Vector1f();
 	float[] inputsOnSplit;
 	float[] expectedOutputs;
 	boolean firstIterationOfTimeline = true;
 	ArrayDeque<boolean[]> outputstorage;
+	Vector2f[] trackpoints;
+	boolean learndSomethingInSavingInterval = false;
+
+	// normalization
+	final float maxVelocity = 601;
+	final float halfMaxVelocity = maxVelocity / 2f;
+	final float maxSightRange = 2000;
+	final float halfMaxSightRange = maxSightRange / 2f;
 
 	@Override
 	public void init() {
-		initDisplay(new GLDisplay(), new DisplayMode(1280, 720, "AICars", false), new PixelFormat(),
+		initDisplay(new GLDisplay(), new DisplayMode(1280, 720, "AICars " + nnFilename, false), new PixelFormat(),
 				new VideoSettings(1920, 1080), new NullSoundEnvironment());
 
 		int defaultShaderID = ShaderLoader.loadShaderFromFile("res/shaders/defaultshader.vert",
@@ -97,6 +117,12 @@ public class Game extends StandardGame {
 				ShaderLoader.loadShaderFromFile("res/shaders/colorshader.vert", "res/shaders/colorshader.frag"));
 		raycasttrackershader.addArgument("u_color", new Vector4f(1, 0, 0, 1));
 		addShader2d(raycasttrackershader);
+
+		Texture texture = new Texture(TextureLoader.loadTexture("res/textures/arrow.png"));
+		Shader textureshader = new Shader(
+				ShaderLoader.loadShaderFromFile("res/shaders/arrowshader.vert", "res/shaders/arrowshader.frag"));
+		textureshader.addArgument("u_texture", texture);
+		addShader2d(textureshader);
 
 		space = new PhysicsSpace2(new VerletIntegration(), new DynamicAABBTree2(), new GJK2(new EPA2()),
 				new SupportRaycast2(), new ImpulseResolution(), new ProjectionCorrection(1),
@@ -140,13 +166,13 @@ public class Game extends StandardGame {
 		}
 		rayrotation.rotate(360 / (float) numRaycasts);
 
-		int nnInputcount = 5 + numRaycasts;
+		int nnInputcount = nnInputs;
 		int nnOutputcount = 4;
 		nn = new NeuralNetwork(new int[] { nnInputcount, 20, 20, 10, nnOutputcount });
 
 		BufferedReader br = null;
 		try {
-			br = new BufferedReader(new FileReader("res/networks/NN1"));
+			br = new BufferedReader(new FileReader(nnFilepath));
 			savingIntervalCount = nn.parse(br);
 			br.close();
 		} catch (IOException e) {
@@ -159,8 +185,24 @@ public class Game extends StandardGame {
 		random = new Random();
 		setRendered(false, true, false);
 
+		arrowUp = new Quad(75, 25, 25, 25);
+		arrowDown = new Quad(75, 75, 25, 25);
+		arrowLeft = new Quad(25, 75, 25, 25);
+		arrowRight = new Quad(125, 75, 25, 25);
+		arrowDown.rotate(180);
+		arrowLeft.rotate(-90);
+		arrowRight.rotate(90);
+		arrowUp.setRenderHints(true, true, false);
+		arrowDown.setRenderHints(true, true, false);
+		arrowLeft.setRenderHints(true, true, false);
+		arrowRight.setRenderHints(true, true, false);
+		textureshader.addObject(arrowUp);
+		textureshader.addObject(arrowDown);
+		textureshader.addObject(arrowLeft);
+		textureshader.addObject(arrowRight);
+
 		outputstorage = new ArrayDeque<boolean[]>();
-		for (int i = 0; i < maxIterationsInTimeline - 1; i++) {
+		for (int i = 0; i < maxIterationsInTimeline; i++) {
 			outputstorage.add(new boolean[4]);
 		}
 	}
@@ -180,6 +222,7 @@ public class Game extends StandardGame {
 	}
 
 	private void initTrack(Vector2f[] trackpoints, float[] trackwidths) {
+		this.trackpoints = trackpoints;
 		for (Vector2f v : trackpoints)
 			defaultshader.addObject(new Circle(v.x, v.y, 10, 36));
 
@@ -320,24 +363,26 @@ public class Game extends StandardGame {
 			if (mode != 3 || timeline < 2 || firstIterationOfTimeline) {
 				for (int i = 0; i < nnInputs; i++) {
 					if (i < numRaycasts) {
-						nnIns[i] = raycastDistances[i];
+						nnIns[i] = Math.min(raycastDistances[i], maxSightRange) / halfMaxSightRange - 1;
 					} else if (i == numRaycasts) {
-						nnIns[i] = (float) car.getBody().getLinearVelocity().length();
+						nnIns[i] = (float) car.getBody().getLinearVelocity().length() / halfMaxVelocity - 1;
 					} else if (i == numRaycasts + 1) {
-						nnIns[i] = lastUp ? 1 : 0;
+						nnIns[i] = VecMath.dotproduct(car.getBody().getLinearVelocity(), car.direction) >= 0 ? 1 : -1;
 					} else if (i == numRaycasts + 2) {
-						nnIns[i] = lastDown ? 1 : 0;
+						nnIns[i] = lastUp ? 1 : -1;
 					} else if (i == numRaycasts + 3) {
-						nnIns[i] = lastLeft ? 1 : 0;
+						nnIns[i] = lastDown ? 1 : -1;
 					} else if (i == numRaycasts + 4) {
-						nnIns[i] = lastRight ? 1 : 0;
+						nnIns[i] = lastLeft ? 1 : -1;
+					} else if (i == numRaycasts + 5) {
+						nnIns[i] = lastRight ? 1 : -1;
 					}
 				}
 				nnOuts = nn.feedForward(nnIns);
-				lastUp = nnOuts[0] > 0.5;
-				lastDown = nnOuts[1] > 0.5;
-				lastLeft = nnOuts[2] > 0.5;
-				lastRight = nnOuts[3] > 0.5;
+				lastUp = nnOuts[0] > 0;
+				lastDown = nnOuts[1] > 0;
+				lastLeft = nnOuts[2] > 0;
+				lastRight = nnOuts[3] > 0;
 			}
 
 			if (mode == 2) {
@@ -353,7 +398,7 @@ public class Game extends StandardGame {
 						splitRotation.set(car.getRotation());
 						splitVelocity.set(car.getBody().getLinearVelocity());
 						splitAngularVelocity.set(car.getBody().getAngularVelocity());
-						System.arraycopy(nnIns, 0, inputsOnSplit, 0, nnIns.length);
+						splitForceAccumulator.set(car.getBody().getForceAccumulator());
 						timeline++;
 						trainingtimer = 0;
 						for (int i = 0; i < firstTimelineOutputs.size(); i++) {
@@ -361,7 +406,8 @@ public class Game extends StandardGame {
 						}
 						summedVelocityInTimeline1 = 0;
 						summedVelocityInTimeline2 = 0;
-						splitlength = (int) (random.nextFloat() * maxSplitLength);
+						splitlength = minSplitLength + (int) (random.nextFloat() * splitLengthInterval);
+						controllength = (int) (random.nextFloat() * maxControllLength);
 					}
 				} else if (timeline == 1) {
 					passCarInputs(lastUp, lastDown, lastLeft, lastRight);
@@ -374,15 +420,16 @@ public class Game extends StandardGame {
 						firstTimelineOutputs.add(outputarray);
 						summedVelocityInTimeline1 += car.getBody().getLinearVelocity().length();
 					} else {
+						System.arraycopy(nnIns, 0, inputsOnSplit, 0, nnIns.length);
 						firstIterationOfTimeline = false;
 					}
-					System.arraycopy(nnIns, 0, inputsOnSplit, 0, nnIns.length);
 					if (trainingtimer >= splitlength) {
 						velocityAfterInterval = (float) car.getBody().getLinearVelocity().length();
 						car.getTranslation().set(splitPosition);
 						car.getRotation().set(splitRotation);
 						car.getBody().getLinearVelocity().set(splitVelocity);
 						car.getBody().getAngularVelocity().set(splitAngularVelocity);
+						car.getBody().getForceAccumulator().set(splitForceAccumulator);
 						timeline++;
 						trainingtimer = 0;
 						firstIterationOfTimeline = true;
@@ -391,53 +438,66 @@ public class Game extends StandardGame {
 					if (firstIterationOfTimeline) {
 						if (random.nextFloat() < 0.9) {
 							int modifiyInput = (int) (random.nextFloat() * 4);
-							// System.out.println("Modifying: " + modifiyInput);
 							switch (modifiyInput) {
 							case 0:
 								lastUp = !lastUp;
-								nnOuts[0] = lastUp ? 1 : 0;
+								nnOuts[0] = lastUp ? 1 : -1;
 								break;
 							case 1:
 								lastDown = !lastDown;
-								nnOuts[1] = lastDown ? 1 : 0;
+								nnOuts[1] = lastDown ? 1 : -1;
 								break;
 							case 2:
 								lastLeft = !lastLeft;
-								nnOuts[2] = lastLeft ? 1 : 0;
+								nnOuts[2] = lastLeft ? 1 : -1;
 								break;
 							case 3:
 								lastRight = !lastRight;
-								nnOuts[3] = lastRight ? 1 : 0;
+								nnOuts[3] = lastRight ? 1 : -1;
 								break;
 							}
-							System.arraycopy(nnOuts, 0, expectedOutputs, 0, nnOuts.length);
-							firstIterationOfTimeline = false;
 						} else {
 							lastUp = random.nextFloat() < 0.5;
 							lastDown = random.nextFloat() < 0.5;
 							lastLeft = random.nextFloat() < 0.5;
 							lastRight = random.nextFloat() < 0.5;
+							nnOuts[0] = lastUp ? 1 : -1;
+							nnOuts[1] = lastDown ? 1 : -1;
+							nnOuts[2] = lastLeft ? 1 : -1;
+							nnOuts[3] = lastRight ? 1 : -1;
 						}
+						System.arraycopy(nnOuts, 0, expectedOutputs, 0, nnOuts.length);
+						firstIterationOfTimeline = false;
 					} else {
 						summedVelocityInTimeline2 += car.getBody().getLinearVelocity().length();
 						boolean[] outputs = firstTimelineOutputs.pop();
-						lastUp = outputs[0];
-						lastDown = outputs[1];
-						lastLeft = outputs[2];
-						lastRight = outputs[3];
+						if (controltimer < controllength) {
+							controltimer += delta;
+						} else {
+							lastUp = outputs[0];
+							lastDown = outputs[1];
+							lastLeft = outputs[2];
+							lastRight = outputs[3];
+						}
 						outputstorage.add(outputs);
 					}
 					passCarInputs(lastUp, lastDown, lastLeft, lastRight);
 					if (trainingtimer >= splitlength) {
 						if (summedVelocityInTimeline1 < summedVelocityInTimeline2) {
 							nn.feedForward(inputsOnSplit);
+							for (int i = 0; i < expectedOutputs.length; i++)
+								System.out.print(expectedOutputs[i] + "; ");
+							System.out.println();
 							nn.backProp(expectedOutputs);
+							learndSomethingInSavingInterval = true;
 						}
 						car.getTranslation().set(splitPosition);
 						car.getRotation().set(splitRotation);
 						car.getBody().getLinearVelocity().set(splitVelocity);
 						car.getBody().getAngularVelocity().set(splitAngularVelocity);
+						car.getBody().getForceAccumulator().set(splitForceAccumulator);
 						timeline = 0;
+						controltimer = 0;
 						trainingtimer = 0;
 						firstIterationOfTimeline = true;
 
@@ -445,7 +505,7 @@ public class Game extends StandardGame {
 						if (trainingsIterationsSinceSave >= savingInterval) {
 							savingIntervalCount++;
 							try {
-								BufferedWriter writer = new BufferedWriter(new FileWriter("res/networks/NN1"));
+								BufferedWriter writer = new BufferedWriter(new FileWriter(nnFilepath));
 								writer.write(nn.toString(savingIntervalCount));
 								writer.close();
 							} catch (IOException e) {
@@ -453,6 +513,11 @@ public class Game extends StandardGame {
 							}
 							System.out.println("Saved! " + savingIntervalCount);
 							trainingsIterationsSinceSave = 0;
+							if (!learndSomethingInSavingInterval) {
+								System.out.println("Learned nothing, change position!");
+								car.getTranslation().set(trackpoints[random.nextInt(trackpoints.length)]);
+							}
+							learndSomethingInSavingInterval = false;
 						}
 					}
 				}
@@ -462,6 +527,10 @@ public class Game extends StandardGame {
 	}
 
 	private void passCarInputs(boolean up, boolean down, boolean left, boolean right) {
+		arrowUp.setRendered(up);
+		arrowDown.setRendered(down);
+		arrowLeft.setRendered(left);
+		arrowRight.setRendered(right);
 		if (up) {
 			car.accelerate();
 		}
