@@ -1,7 +1,12 @@
-package objects;
+package cars;
 
 import math.VecMath;
 import matrix.Matrix1f;
+import objects.CollisionShape;
+import objects.CollisionShape2;
+import objects.RigidBody2;
+import objects.ShapedObject2;
+import objects.SupportCalculator;
 import quaternion.Complexf;
 import utils.GLConstants;
 import vector.Vector2f;

@@ -1,4 +1,4 @@
-package game;
+package cars;
 
 public class Start {
 	public static void main(String[] args) {

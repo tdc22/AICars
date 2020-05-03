@@ -1,8 +1,10 @@
-package objects;
+package cars;
 
 import math.VecMath;
 import matrix.Matrix1f;
 import matrix.Matrix2;
+import objects.Ray2;
+import objects.RigidBody2;
 import physics.PhysicsShapeCreator;
 import quaternion.Complexf;
 import shape2d.Quad;
@@ -43,7 +45,7 @@ public class Car extends Quad {
 		for (int i = 0; i < numrays; i++) {
 			rays[i] = new Ray2(new Vector2f(), new Vector2f());
 			raystartpoints[i] = body.supportPointLocal(dir);
-			raystartpoints[i].scale(1.01);
+			raystartpoints[i].scale(0.5f);
 			dir.transform(rayrotation);
 		}
 	}

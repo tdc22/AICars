@@ -1,4 +1,4 @@
-package game;
+package cars;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -6,7 +6,9 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayDeque;
+import java.util.Iterator;
 import java.util.Random;
+import java.util.Set;
 
 import ai.NeuralNetwork;
 import broadphase.DynamicAABBTree2;
@@ -14,6 +16,7 @@ import display.DisplayMode;
 import display.GLDisplay;
 import display.PixelFormat;
 import display.VideoSettings;
+import game.StandardGame;
 import input.Input;
 import input.InputEvent;
 import input.KeyInput;
@@ -26,9 +29,8 @@ import math.VecMath;
 import narrowphase.EPA2;
 import narrowphase.GJK2;
 import narrowphase.SupportRaycast2;
-import objects.Car;
 import objects.Ray2;
-import objects.Wall;
+import objects.RigidBody;
 import physics.PhysicsSpace2;
 import positionalcorrection.ProjectionCorrection;
 import quaternion.Complexf;
@@ -56,11 +58,11 @@ public class Game extends StandardGame {
 	float[] raycastDistances;
 	boolean isRendering = true;
 
-	final String nnFilename = "NN9";
+	final String nnFilename = "NN13_CircleTrack";
 	final String nnFilepath = "res/networks/" + nnFilename;
 	NeuralNetwork nn;
 	Random random;
-	int nnInputs = numRaycasts + 7;
+	int nnInputs = numRaycasts + 8;
 	float undefinedRayDistance = 0;
 	boolean lastLeft = false, lastRight = false, lastUp = false, lastDown = false;
 	float lastVelocity = 0;
@@ -158,7 +160,10 @@ public class Game extends StandardGame {
 		inputs.addEvent(toggleRendering);
 
 		initTrackData();
-		car = new Car(620, 200, numRaycasts);
+		car = new Car(trackpoints[0].x, trackpoints[0].y, numRaycasts);
+		for(int i = 0; i < numRaycasts; i++) {
+			space.addRaycastFilter(car.getBody(), car.rays[i]);
+		}
 		space.addRigidBody(car, car.getBody());
 		defaultshader.addObject(car);
 
@@ -220,11 +225,14 @@ public class Game extends StandardGame {
 	}
 
 	private void initTrackData() {
-		initTrack(new Vector2f[] { new Vector2f(600, 220), new Vector2f(1000, 220), new Vector2f(1600, 300),
+		/*initTrack(new Vector2f[] { new Vector2f(600, 220), new Vector2f(1000, 220), new Vector2f(1600, 300),
 				new Vector2f(1700, 600), new Vector2f(1600, 900), new Vector2f(1300, 900), new Vector2f(1300, 700),
 				new Vector2f(1300, 600), new Vector2f(1200, 500), new Vector2f(1100, 500), new Vector2f(500, 900),
 				new Vector2f(200, 700), new Vector2f(400, 400) },
-				new float[] { 120, 120, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100 });
+				new float[] { 120, 120, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100 });*/
+		initTrack(new Vector2f[] { new Vector2f(950, 200), new Vector2f(1500, 500), new Vector2f(950, 900),
+				new Vector2f(400, 500) },
+				new float[] { 180, 250, 180, 250 });
 	}
 
 	private void initTrack(Vector2f[] trackpoints, float[] trackwidths) {
@@ -266,8 +274,8 @@ public class Game extends StandardGame {
 			tracklengths[i] = (float) VecMath.subtraction(pb, pa).length();
 
 			Vector2f a1 = VecMath.scale(normalA, wa);
-			Vector2f b1 = VecMath.scale(normalA, wa + 10f);
-			Vector2f c1 = VecMath.scale(normalB, wb + 10f);
+			Vector2f b1 = VecMath.scale(normalA, wa + 20f);
+			Vector2f c1 = VecMath.scale(normalB, wb + 20f);
 			Vector2f d1 = VecMath.scale(normalB, wb);
 
 			a1.translate(pa);
@@ -278,8 +286,8 @@ public class Game extends StandardGame {
 			addWall(a1, d1, c1, b1);
 
 			Vector2f a2 = VecMath.scale(normalA, -wa);
-			Vector2f b2 = VecMath.scale(normalA, -wa + 10f);
-			Vector2f c2 = VecMath.scale(normalB, -wb + 10f);
+			Vector2f b2 = VecMath.scale(normalA, -wa + 20f);
+			Vector2f c2 = VecMath.scale(normalB, -wb + 20f);
 			Vector2f d2 = VecMath.scale(normalB, -wb);
 
 			a2.translate(pa);
@@ -314,6 +322,8 @@ public class Game extends StandardGame {
 	private Complexf rayrotation = new Complexf();
 	private Vector2f lastdirection = new Vector2f();
 	private Vector2f raystart = new Vector2f();
+	
+	boolean errorstop = false;
 
 	private void singleRaycast(Car c, int i) {
 		Ray2 ray = c.rays[i];
@@ -327,8 +337,30 @@ public class Game extends StandardGame {
 			raycastTrackers[i].translateTo(rr.getHitPosition());
 			raycastDistances[i] = rr.getHitDistance();
 		} else {
-			raycastTrackers[i].translateTo(-100, -100);
+			//raycastTrackers[i].translateTo(-100, -100);
 			raycastDistances[i] = undefinedRayDistance;
+			errorstop = true;
+			mode = 1;
+			Set<RigidBody<Vector2f, ?, Complexf, ?>> overlaps = space.raycastAllBroadphase(ray);
+			System.out.println("RC Overlaps: " + overlaps.size());
+			Iterator<RigidBody<Vector2f, ?, Complexf, ?>> it = overlaps.iterator();
+			for(int j = 0; j < overlaps.size(); j++) {
+				RigidBody<Vector2f, ?, Complexf, ?> rb = it.next();
+				System.out.println(j + "; " + rb.getTranslation());
+				if(Math.random() > 0.5) {
+					raycastTrackers[i].translateTo(rb.getTranslation());
+				}
+			}
+			if(Math.random() > 0.7) {
+				Vector2f d = new Vector2f(ray.getDirection());
+				d.scale(50);
+				d.translate(c.getTranslation());
+				raycastTrackers[i].translateTo(d);
+			}
+			if(Math.random() > 0.85) {
+				raycastTrackers[i].translateTo(ray.getPosition());
+			}
+			System.out.println("Raycast Error! " + this.trainingsIterationsSinceSave + "; " + i + "; " + c.getTranslation() + "; " + c.getRotation() + "; " + ray.getPosition() + "; " + ray.getDirection());
 		}
 	}
 
@@ -353,8 +385,8 @@ public class Game extends StandardGame {
 		if(VecMath.dotproduct(cB, nextTangent) > 0) {
 			currentSegment = (currentSegment + 1) % segmentCount;
 			if(currentSegment == 0) {
+				nextLap = forward;
 				forward = true;
-				nextLap = true;
 			}
 			lastTP.set(nextTP);
 			int nextindex = (currentSegment + 1) % segmentCount;
@@ -411,6 +443,7 @@ public class Game extends StandardGame {
 			mode = 2;
 		} else if (mode3.isActive()) {
 			mode = 3;
+			errorstop = false;
 		}
 		if (toggleRendering.isActive()) {
 			isRendering = !isRendering;
@@ -447,7 +480,9 @@ public class Game extends StandardGame {
 				nnIns[numRaycasts + 3] = lastDown ? 1 : -1;
 				nnIns[numRaycasts + 4] = lastLeft ? 1 : -1;
 				nnIns[numRaycasts + 5] = lastRight ? 1 : -1;
-				nnIns[numRaycasts + 6] = ((forward ? 1 : -1) * VecMath.dotproduct(car.direction, trackDir) > 0) ? 1 : -1;
+				float forwardfactor = forward ? 1 : -1;
+				nnIns[numRaycasts + 6] = (forwardfactor * VecMath.dotproduct(car.direction, trackDir) > 0) ? 1 : -1;
+				nnIns[numRaycasts + 7] = (forwardfactor * VecMath.dotproduct(car.getBody().getLinearVelocity(), trackDir) > 0) ? 1 : -1;
 				nnOuts = nn.feedForward(nnIns);
 				lastUp = nnOuts[0] > 0;
 				lastDown = nnOuts[1] > 0;
@@ -562,6 +597,7 @@ public class Game extends StandardGame {
 						float progressTimeline1 = progressAfterTimeline1 - progressAtStart;
 						float progressTimeline2 = progressAfterTimeline2 - progressAtStart;
 						if (progressTimeline1 < progressTimeline2 && progressTimeline2 > 0 || (!nextLapTimeline1 && nextLapTimeline2)) {
+							System.out.println(progressTimeline1 + "; " + progressTimeline2 + "; " + nextLapTimeline1 + "; " + nextLapTimeline2);
 							nn.feedForward(inputsOnSplit);
 							for (int i = 0; i < expectedOutputs.length; i++)
 								System.out.print(expectedOutputs[i] + "; ");
@@ -601,7 +637,9 @@ public class Game extends StandardGame {
 				}
 			}
 		}
-		space.update(delta);
+		if(!errorstop) {
+			space.update(delta);
+		}
 	}
 
 	private void passCarInputs(boolean up, boolean down, boolean left, boolean right) {
